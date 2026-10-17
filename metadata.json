@@ -1,0 +1,6 @@
+{
+  "name": "StudyOS",
+  "description": "Premium offline-first personal study tracker with smart backlog carry-forward, weekly timetable, lecture and DPP tracking, and gamification.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
