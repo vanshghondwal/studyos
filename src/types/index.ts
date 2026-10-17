@@ -24,7 +24,9 @@ export interface DaySchedule {
 
 export interface DailyTask {
   id: string;
-  dateKey: string; // YYYY-MM-DD of the scheduled day
+  dateKey: string; // YYYY-MM-DD of the study day
+  studyDate?: string; // YYYY-MM-DD expected study date
+  originalClassDate?: string; // YYYY-MM-DD date class originally took place
   title: string;
   type: TaskType;
   subjectId: string;

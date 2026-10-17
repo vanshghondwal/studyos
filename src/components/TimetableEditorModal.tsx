@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { X, Sliders, Check } from 'lucide-react';
+import { X, Sliders, Check, Video } from 'lucide-react';
 import { StudyDataState } from '../hooks/useStudyData';
+import { WEEKDAY_NAMES } from '../utils/dates';
 
 interface TimetableEditorModalProps {
   isOpen: boolean;
@@ -20,6 +21,7 @@ export const TimetableEditorModal: React.FC<TimetableEditorModalProps> = ({
   if (!isOpen) return null;
 
   const activeDay = data.weeklySchedule.find((s) => s.dayOfWeek === selectedDayOfWeek);
+  const followingDayName = WEEKDAY_NAMES[(selectedDayOfWeek + 1) % 7];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-2xs p-4">
@@ -36,6 +38,18 @@ export const TimetableEditorModal: React.FC<TimetableEditorModalProps> = ({
             <X className="w-4 h-4" />
           </button>
         </div>
+
+        {/* Recorded lecture mapping notice */}
+        <div className="p-3 rounded-xl bg-blue-50/70 border border-blue-200/60 text-xs text-blue-900 mb-4 flex items-start gap-2">
+          <Video className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+          <div>
+            <span className="font-semibold">Recorded Lecture Mapping: </span>
+            <span className="text-blue-800">
+              Classes set for {activeDay?.dayName} will appear as recorded lectures on {followingDayName}.
+            </span>
+          </div>
+        </div>
+
 
         {/* Day selector tabs */}
         <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl mb-5">

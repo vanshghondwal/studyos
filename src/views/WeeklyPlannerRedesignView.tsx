@@ -10,6 +10,8 @@ import {
   FileText,
   X,
   Sparkles,
+  Video,
+  ArrowRight,
 } from 'lucide-react';
 import { StudyDataState } from '../hooks/useStudyData';
 import { DaySchedule } from '../types';
@@ -17,6 +19,10 @@ import {
   getTodayKey,
   getWeekDaysForDate,
   formatFriendlyDate,
+  parseDateKey,
+  getPreviousDayKey,
+  getDayOfWeekFromKey,
+  formatOriginalClassDateLabel,
 } from '../utils/dates';
 
 interface WeeklyPlannerRedesignViewProps {
@@ -34,6 +40,7 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
 }) => {
   const todayKey = getTodayKey();
   const [currentWeekBaseDate, setCurrentWeekBaseDate] = useState<Date>(new Date());
+  const [selectedDayKey, setSelectedDayKey] = useState<string>(todayKey);
   const [editingDay, setEditingDay] = useState<DaySchedule | null>(null);
 
   const subjectMap = new Map(data.subjects.map((s) => [s.id, s]));
@@ -55,6 +62,7 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
 
   const resetToThisWeek = () => {
     setCurrentWeekBaseDate(new Date());
+    setSelectedDayKey(todayKey);
   };
 
   return (
@@ -64,11 +72,18 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
             <CalendarDays className="w-5 h-5 text-blue-600" />
-            <span>Weekly Curriculum Planner</span>
+            <span>Weekly Planner & Recorded Class Mapping</span>
           </h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Full 7-day schedule with independent Lecture and DPP classes every day.
-          </p>
+          <div className="flex flex-wrap items-center gap-2 mt-1">
+            <p className="text-xs text-slate-500">
+              Recorded lectures watched the day after original class date.
+            </p>
+            <span className="text-slate-300">•</span>
+            <span className="text-xs font-medium text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200/60 inline-flex items-center gap-1">
+              <Video className="w-3 h-3 text-blue-600" />
+              <span>1-day calendar offset active</span>
+            </span>
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -97,30 +112,57 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
         </div>
       </div>
 
-      {/* 7 Days Schedule Cards */}
+      {/* 7 Days Schedule Cards (Monday through Sunday) */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {weekDays.map((wd) => {
-          const schedule = data.weeklySchedule.find((s) => s.dayOfWeek === wd.dayOfWeek);
+          // Recorded lecture mapping: The study tasks on wd.dateKey correspond to original class date 1 day prior
+          const origDateKey = getPreviousDayKey(wd.dateKey);
+          const origDayOfWeek = getDayOfWeekFromKey(origDateKey);
+          const schedule = data.weeklySchedule.find((s) => s.dayOfWeek === origDayOfWeek);
+
           const isToday = wd.isToday;
+          const isSelected = wd.dateKey === selectedDayKey;
+
+          // Tasks for this study date
           const dayTasks = data.allTasks.filter((t) => t.dateKey === wd.dateKey);
           const doneCount = dayTasks.filter((t) => t.done).length;
           const totalCount = dayTasks.length;
           const isAllDone = totalCount > 0 && doneCount === totalCount;
           const percent = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
 
+          // Study date formatting (prominent)
+          const dateObj = parseDateKey(wd.dateKey);
+          const studyFriendly = dateObj.toLocaleDateString('en-US', {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+          });
+
+          // Original class date formatting (muted underneath)
+          const origDateObj = parseDateKey(origDateKey);
+          const origFriendly = origDateObj.toLocaleDateString('en-US', {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+          });
+
           return (
             <div
               key={wd.dateKey}
-              className={`rounded-2xl border bg-white p-4 sm:p-5 shadow-xs transition-all flex flex-col justify-between ${
-                isToday
-                  ? 'border-blue-400 ring-1 ring-blue-300/60 shadow-sm'
+              onClick={() => setSelectedDayKey(wd.dateKey)}
+              className={`rounded-2xl border bg-white p-4 sm:p-5 shadow-xs transition-all flex flex-col justify-between cursor-pointer ${
+                isSelected
+                  ? 'border-blue-500 ring-2 ring-blue-300/70 shadow-sm'
+                  : isToday
+                  ? 'border-blue-300 ring-1 ring-blue-200'
                   : 'border-slate-200/90 hover:border-slate-300'
               }`}
             >
               <div>
-                {/* Day Header */}
-                <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
+                {/* Day Header with Study Date prominent and Original Class Date underneath */}
+                <div className="flex items-start justify-between pb-3 border-b border-slate-100 mb-3">
                   <div>
+                    {/* Actual study day & date prominently */}
                     <div className="flex items-center gap-1.5">
                       <span className="text-sm font-bold text-slate-900">{wd.dayName}</span>
                       {isToday && (
@@ -129,23 +171,32 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
                         </span>
                       )}
                     </div>
-                    <span className="text-xs text-slate-400 font-sans">
-                      {formatFriendlyDate(wd.dateKey)}
-                    </span>
+                    <div className="text-xs font-semibold text-slate-700 font-sans mt-0.5">
+                      {studyFriendly}
+                    </div>
+
+                    {/* Original class date in smaller, muted text directly underneath */}
+                    <div className="text-[11px] text-slate-500 font-sans mt-1 flex items-center gap-1">
+                      <Video className="w-3 h-3 text-slate-400 shrink-0" />
+                      <span>Recorded classes for {origFriendly}</span>
+                    </div>
                   </div>
 
                   {schedule && (
                     <button
-                      onClick={() => setEditingDay(schedule)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
-                      title={`Edit ${wd.dayName} timetable`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingDay(schedule);
+                      }}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer shrink-0"
+                      title={`Edit ${schedule.dayName} classes`}
                     >
                       <Edit2 className="w-3.5 h-3.5" />
                     </button>
                   )}
                 </div>
 
-                {/* Day Content: All days have 3 Class slots with Lecture & DPP */}
+                {/* Day Content: All days have 3 Class slots with separate Lecture & DPP checkboxes */}
                 <div className="space-y-3">
                   {schedule?.classes.map((cls) => {
                     const sub = cls.subjectId ? subjectMap.get(cls.subjectId) : null;
@@ -179,10 +230,13 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
 
                         {sub && (
                           <div className="space-y-1.5 pt-1.5 border-t border-slate-200/60">
-                            {/* Lecture Row */}
+                            {/* Separate Lecture Checkbox */}
                             <div className="flex items-center justify-between text-xs">
                               <button
-                                onClick={() => lectureTask && onToggleTask(lectureTask.id)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (lectureTask) onToggleTask(lectureTask.id);
+                                }}
                                 className="flex items-center gap-1.5 text-left group cursor-pointer min-w-0"
                                 title={lectureTask ? 'Toggle lecture completion' : undefined}
                               >
@@ -208,10 +262,13 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
                               <span className="text-[10px] text-slate-400 font-sans shrink-0">~1 hr</span>
                             </div>
 
-                            {/* DPP Row */}
+                            {/* Separate DPP Checkbox */}
                             <div className="flex items-center justify-between text-xs">
                               <button
-                                onClick={() => dppTask && onToggleTask(dppTask.id)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (dppTask) onToggleTask(dppTask.id);
+                                }}
                                 className="flex items-center gap-1.5 text-left group cursor-pointer min-w-0"
                                 title={dppTask ? 'Toggle DPP completion' : undefined}
                               >
@@ -267,10 +324,14 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
                 </div>
 
                 <button
-                  onClick={() => onSelectDate(wd.dateKey)}
-                  className="w-full py-1.5 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-xs font-semibold text-slate-700 text-center transition-colors cursor-pointer"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectDate(wd.dateKey);
+                  }}
+                  className="w-full py-1.5 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-xs font-semibold text-slate-700 text-center transition-colors cursor-pointer flex items-center justify-center gap-1"
                 >
-                  Open {wd.dayName.slice(0, 3)} Tasks
+                  <span>Open {wd.dayName.slice(0, 3)} Tasks</span>
+                  <ArrowRight className="w-3 h-3 text-slate-400" />
                 </button>
               </div>
             </div>
@@ -282,7 +343,7 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
       {editingDay && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-2xs p-4">
           <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl p-6 shadow-xl text-slate-900 font-sans">
-            <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-100">
+            <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-100">
               <h3 className="text-base font-bold text-slate-900">
                 Edit {editingDay.dayName} Timetable
               </h3>
@@ -294,9 +355,15 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
               </button>
             </div>
 
-            <p className="text-xs text-slate-500 mb-4">
-              Each class slot automatically schedules both a Lecture and a Daily Practice Problem (DPP).
-            </p>
+            <div className="p-3 rounded-xl bg-blue-50/70 border border-blue-200/60 text-xs text-blue-900 mb-4 flex items-start gap-2">
+              <Video className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold">Recorded Lecture Mapping</p>
+                <p className="text-[11px] text-blue-700 mt-0.5">
+                  Classes scheduled for {editingDay.dayName} will be watched as recorded lectures on the following day.
+                </p>
+              </div>
+            </div>
 
             <div className="space-y-4">
               {editingDay.classes.map((cls) => (

@@ -70,6 +70,25 @@ export function addDays(dateKey: string, days: number): string {
   return formatDateKey(d);
 }
 
+export function getPreviousDayKey(dateKey: string): string {
+  return addDays(dateKey, -1);
+}
+
+export function getNextDayKey(dateKey: string): string {
+  return addDays(dateKey, 1);
+}
+
+export function formatOriginalClassDateLabel(studyDateKey: string): string {
+  const origKey = getPreviousDayKey(studyDateKey);
+  const origDate = parseDateKey(origKey);
+  const formatted = origDate.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+  return `Recorded classes for ${formatted}`;
+}
+
 export function getWeekDaysForDate(targetDate: Date): { dateKey: string; dayOfWeek: number; dayName: string; isToday: boolean }[] {
   const currentDay = targetDate.getDay(); // 0 is Sun, 1 is Mon...
   // Monday as start of week:

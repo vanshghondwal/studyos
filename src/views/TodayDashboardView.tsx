@@ -15,6 +15,7 @@ import {
   CalendarCheck,
   Sliders,
   X,
+  Video,
 } from 'lucide-react';
 import { StudyDataState } from '../hooks/useStudyData';
 import { DailyTask, TaskType } from '../types';
@@ -25,6 +26,9 @@ import {
   addDays,
   getDaysOverdue,
   parseDateKey,
+  getPreviousDayKey,
+  getDayOfWeekFromKey,
+  formatOriginalClassDateLabel,
 } from '../utils/dates';
 import { SubjectIcon } from '../components/SubjectIcon';
 
@@ -99,9 +103,10 @@ export const TodayDashboardView: React.FC<TodayDashboardViewProps> = ({
   const remainingTasks = Math.max(0, totalTasks - completedTasks);
   const completionPercent = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
-  // Day Schedule from template
-  const dayOfWeek = selectedDate.getDay();
-  const daySchedule = data.weeklySchedule.find((s) => s.dayOfWeek === dayOfWeek);
+  // Recorded lecture mapping: The classes studied on selectedDateKey are the recorded classes from the previous calendar day
+  const originalClassDateKey = getPreviousDayKey(selectedDateKey);
+  const originalClassDayOfWeek = getDayOfWeekFromKey(originalClassDateKey);
+  const daySchedule = data.weeklySchedule.find((s) => s.dayOfWeek === originalClassDayOfWeek);
 
   // Weekly Date Strip (7 cards: Monday to Sunday of the active week)
   const weekDays = getWeekDaysForDate(selectedDate);
@@ -157,7 +162,14 @@ export const TodayDashboardView: React.FC<TodayDashboardViewProps> = ({
             <span>{formattedHeaderDate}</span>
             <span className="text-amber-500 text-lg">☀️</span>
           </h1>
-          <p className="text-xs text-slate-500 mt-0.5">Let's complete your classes</p>
+          <div className="flex flex-wrap items-center gap-2 mt-1">
+            <span className="text-xs text-slate-500">Study Date</span>
+            <span className="text-slate-300">•</span>
+            <span className="text-xs font-medium text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200/60 inline-flex items-center gap-1">
+              <Video className="w-3 h-3 text-blue-600" />
+              <span>{formatOriginalClassDateLabel(selectedDateKey)}</span>
+            </span>
+          </div>
         </div>
 
         <div className="flex items-center gap-1.5 self-start sm:self-auto">
@@ -199,63 +211,84 @@ export const TodayDashboardView: React.FC<TodayDashboardViewProps> = ({
       </div>
 
       {/* 2. Weekly Date Strip (7 Cards for Monday - Sunday) */}
-      <div className="grid grid-cols-7 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
         {weekDays.map((wd) => {
           const isSelected = wd.dateKey === selectedDateKey;
           const dayTasks = data.allTasks.filter((t) => t.dateKey === wd.dateKey);
           const doneCount = dayTasks.filter((t) => t.done).length;
           const totalCount = dayTasks.length;
-          const schedule = data.weeklySchedule.find((s) => s.dayOfWeek === wd.dayOfWeek);
-          const isRest = schedule?.isRestDay;
+
+          // Recorded mapping: Previous calendar day's classes
+          const origDateKey = getPreviousDayKey(wd.dateKey);
+          const origDayOfWeek = getDayOfWeekFromKey(origDateKey);
+          const origSchedule = data.weeklySchedule.find((s) => s.dayOfWeek === origDayOfWeek);
+          const isRest = origSchedule?.isRestDay;
+
           const allDone = totalCount > 0 && doneCount === totalCount;
           const hasDoneSome = doneCount > 0 && !allDone;
-
           const percent = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
 
-          // Short friendly date: e.g. "18 Oct"
+          // Study date
           const dateObj = parseDateKey(wd.dateKey);
-          const dayNum = dateObj.getDate();
-          const monthShort = dateObj.toLocaleDateString('en-US', { month: 'short' });
+          const studyFriendly = dateObj.toLocaleDateString('en-US', {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+          });
+
+          // Original recorded class date
+          const origDateObj = parseDateKey(origDateKey);
+          const origFriendly = origDateObj.toLocaleDateString('en-US', {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+          });
 
           return (
             <button
               key={wd.dateKey}
               onClick={() => onSelectDateKey(wd.dateKey)}
-              className={`p-3 rounded-2xl border text-left transition-all duration-150 cursor-pointer relative flex flex-col justify-between h-[88px] ${
+              className={`p-3 rounded-2xl border text-left transition-all duration-150 cursor-pointer relative flex flex-col justify-between min-h-[116px] ${
                 isSelected
-                  ? 'border-blue-400 bg-blue-50/60 shadow-xs ring-1 ring-blue-300/60'
+                  ? 'border-blue-500 bg-blue-50/70 shadow-xs ring-1 ring-blue-300'
                   : 'border-slate-200/90 bg-white hover:border-slate-300 hover:bg-slate-50/50'
               }`}
             >
               <div className="flex items-start justify-between w-full">
-                <div>
+                <div className="min-w-0 pr-1">
                   <div className="text-xs font-bold text-slate-900 leading-tight">
-                    {wd.dayName.slice(0, 3)}
+                    {wd.dayName}
                   </div>
-                  <div className="text-[11px] text-slate-500 font-sans mt-0.5 leading-tight">
-                    {dayNum} {monthShort}
+                  <div className="text-[11px] font-semibold text-slate-700 font-sans mt-0.5 leading-tight">
+                    {studyFriendly}
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-sans mt-1 leading-snug">
+                    Recorded classes for {origFriendly}
                   </div>
                 </div>
 
                 {/* Status indicator icon in top right */}
                 {isRest ? (
-                  <span className="w-4 h-4 rounded-full border border-slate-200 flex items-center justify-center text-[9px] text-slate-400">
+                  <span className="w-4 h-4 rounded-full border border-slate-200 flex items-center justify-center text-[9px] text-slate-400 shrink-0">
                     ·
                   </span>
                 ) : allDone ? (
-                  <div className="w-4 h-4 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-2xs">
+                  <div className="w-4 h-4 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-2xs shrink-0">
                     <Check className="w-2.5 h-2.5 stroke-[3]" />
                   </div>
                 ) : hasDoneSome ? (
-                  <div className="w-4 h-4 rounded-full border-2 border-amber-400 bg-amber-50" />
+                  <div className="w-4 h-4 rounded-full border-2 border-amber-400 bg-amber-50 shrink-0" />
                 ) : (
-                  <div className="w-4 h-4 rounded-full border border-slate-300" />
+                  <div className="w-4 h-4 rounded-full border border-slate-300 shrink-0" />
                 )}
               </div>
 
-              <div>
-                <div className="text-[11px] font-mono font-medium text-slate-600 mb-1">
-                  {isRest ? '0/0' : `${doneCount}/${totalCount}`}
+              <div className="mt-2 pt-1 border-t border-slate-100/80">
+                <div className="text-[10px] font-mono font-medium text-slate-600 mb-1 flex items-center justify-between">
+                  <span>{isRest ? '0/0' : `${doneCount}/${totalCount}`}</span>
+                  {totalCount > 0 && (
+                    <span className="text-[9px] text-slate-400">{percent}%</span>
+                  )}
                 </div>
                 {/* Thin bottom progress bar */}
                 <div className="w-full h-1 bg-slate-100 rounded-full overflow-hidden">
@@ -352,8 +385,12 @@ export const TodayDashboardView: React.FC<TodayDashboardViewProps> = ({
                             <div className="text-xs font-bold text-slate-900 truncate">
                               {task.title}
                             </div>
-                            <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1.5 font-sans">
-                              <span>Due: {formatFriendlyDate(task.dateKey)}</span>
+                            <div className="text-[11px] text-slate-500 mt-0.5 flex flex-wrap items-center gap-1.5 font-sans">
+                              <span>Due: {formatFriendlyDate(task.studyDate || task.dateKey)}</span>
+                              <span>•</span>
+                              <span className="text-blue-700 bg-blue-50 px-1.5 py-0.2 rounded text-[10px]">
+                                Recorded for: {formatFriendlyDate(task.originalClassDate || getPreviousDayKey(task.dateKey))}
+                              </span>
                               <span>•</span>
                               <span className="text-rose-600 font-medium">
                                 {daysOverdue} {daysOverdue === 1 ? 'day' : 'days'} overdue
@@ -380,7 +417,7 @@ export const TodayDashboardView: React.FC<TodayDashboardViewProps> = ({
                             <span>
                               {task.estimatedMinutes
                                 ? task.estimatedMinutes >= 60
-                                  ? `~ ${Math.round(task.estimatedMinutes / 60)} hr`
+                                ? `~ ${Math.round(task.estimatedMinutes / 60)} hr`
                                   : `~ ${task.estimatedMinutes} min`
                                 : '~ 45 min'}
                             </span>
@@ -400,21 +437,29 @@ export const TodayDashboardView: React.FC<TodayDashboardViewProps> = ({
             <div className="flex items-center justify-between pb-1">
               <div className="flex items-center gap-2">
                 <CalendarCheck className="w-4 h-4 text-slate-700" />
-                <h2 className="text-base font-bold text-slate-900">Today's Classes</h2>
+                <h2 className="text-base font-bold text-slate-900">
+                  {isSelectedToday ? "Today's Study Classes" : `${selectedDate.toLocaleDateString('en-US', { weekday: 'long' })}'s Study Classes`}
+                </h2>
               </div>
               <div className="text-xs font-medium text-slate-500 font-mono">
                 {completedTasks} of {totalTasks} completed
               </div>
             </div>
 
-            <p className="text-xs text-slate-500 -mt-2">
-              {selectedDate.toLocaleDateString('en-US', {
-                weekday: 'long',
-                day: 'numeric',
-                month: 'long',
-                year: 'numeric',
-              })}
-            </p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between -mt-2 gap-1.5 text-xs">
+              <p className="text-slate-500">
+                Study date: {selectedDate.toLocaleDateString('en-US', {
+                  weekday: 'long',
+                  day: 'numeric',
+                  month: 'long',
+                  year: 'numeric',
+                })}
+              </p>
+              <div className="text-xs font-medium text-blue-700 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200/60 inline-flex items-center gap-1.5 self-start">
+                <Video className="w-3.5 h-3.5 text-blue-600" />
+                <span>{formatOriginalClassDateLabel(selectedDateKey)}</span>
+              </div>
+            </div>
 
             {/* Class Cards Grouped by Class Slot */}
             {daySchedule?.classes
@@ -458,9 +503,14 @@ export const TodayDashboardView: React.FC<TodayDashboardViewProps> = ({
                           {classSlot.slot}
                         </div>
 
-                        <h3 className="text-sm font-bold text-slate-900 font-sans">
-                          {sub?.name || 'Subject Class'}
-                        </h3>
+                        <div>
+                          <h3 className="text-sm font-bold text-slate-900 font-sans">
+                            {sub?.name || 'Subject Class'}
+                          </h3>
+                          <div className="text-[11px] text-slate-500 font-sans mt-0.5">
+                            Recorded lecture from {formatFriendlyDate(originalClassDateKey)}
+                          </div>
+                        </div>
                       </div>
 
                       <div className="flex items-center gap-2">

@@ -8,7 +8,7 @@ import {
   UserSettings,
   Achievement,
 } from '../types';
-import { getTodayKey, getDayOfWeekFromKey, getWeekDaysForDate } from '../utils/dates';
+import { getTodayKey, getDayOfWeekFromKey, getWeekDaysForDate, getPreviousDayKey } from '../utils/dates';
 
 export class StudyOSDatabase extends Dexie {
   subjects!: Table<Subject, string>;
@@ -215,10 +215,11 @@ export const DEFAULT_ACHIEVEMENTS: Achievement[] = [
 
 export async function generateTasksForDate(dateKey: string): Promise<DailyTask[]> {
   const existing = await db.dailyTasks.where('dateKey').equals(dateKey).toArray();
-  const existingSlots = new Set(existing.map((t) => `${t.classSlot}-${t.type}`));
 
-  const dayOfWeek = getDayOfWeekFromKey(dateKey);
-  const schedule = await db.weeklySchedule.get(dayOfWeek);
+  // Recorded lecture mapping: The study tasks on dateKey correspond to original classes from 1 calendar day prior
+  const originalClassDate = getPreviousDayKey(dateKey);
+  const originalClassDayOfWeek = getDayOfWeekFromKey(originalClassDate);
+  const schedule = await db.weeklySchedule.get(originalClassDayOfWeek);
   if (!schedule) {
     return existing;
   }
@@ -234,12 +235,15 @@ export async function generateTasksForDate(dateKey: string): Promise<DailyTask[]
     const subject = subjectMap.get(classSlot.subjectId);
     const subjectName = subject ? subject.name : 'Class';
 
-    // 1. Lecture Task if missing
-    if (!existingSlots.has(`${classSlot.slot}-lecture`)) {
+    // 1. Lecture Task
+    const existingLec = existing.find((t) => t.classSlot === classSlot.slot && t.type === 'lecture');
+    if (!existingLec) {
       orderIndex += 1;
       newTasks.push({
         id: `${dateKey}-c${classSlot.slot}-lec`,
         dateKey,
+        studyDate: dateKey,
+        originalClassDate,
         title: `${subjectName} Lecture (Class ${classSlot.slot})`,
         type: 'lecture',
         subjectId: classSlot.subjectId,
@@ -249,14 +253,31 @@ export async function generateTasksForDate(dateKey: string): Promise<DailyTask[]
         order: orderIndex,
         estimatedMinutes: 60,
       });
+    } else {
+      // If task exists, preserve completion state but ensure studyDate/originalClassDate are recorded
+      const updates: Partial<DailyTask> = {};
+      if (!existingLec.studyDate) updates.studyDate = dateKey;
+      if (!existingLec.originalClassDate) updates.originalClassDate = originalClassDate;
+      // If uncompleted and subject doesn't match mapped slot, update to current mapped class
+      if (!existingLec.done && existingLec.subjectId !== classSlot.subjectId) {
+        updates.subjectId = classSlot.subjectId;
+        updates.title = `${subjectName} Lecture (Class ${classSlot.slot})`;
+      }
+      if (Object.keys(updates).length > 0) {
+        await db.dailyTasks.update(existingLec.id, updates);
+        Object.assign(existingLec, updates);
+      }
     }
 
-    // 2. DPP Task if missing
-    if (!existingSlots.has(`${classSlot.slot}-dpp`)) {
+    // 2. DPP Task
+    const existingDpp = existing.find((t) => t.classSlot === classSlot.slot && t.type === 'dpp');
+    if (!existingDpp) {
       orderIndex += 1;
       newTasks.push({
         id: `${dateKey}-c${classSlot.slot}-dpp`,
         dateKey,
+        studyDate: dateKey,
+        originalClassDate,
         title: `${subjectName} DPP ${classSlot.slot}`,
         type: 'dpp',
         subjectId: classSlot.subjectId,
@@ -266,6 +287,18 @@ export async function generateTasksForDate(dateKey: string): Promise<DailyTask[]
         order: orderIndex,
         estimatedMinutes: 30,
       });
+    } else {
+      const updates: Partial<DailyTask> = {};
+      if (!existingDpp.studyDate) updates.studyDate = dateKey;
+      if (!existingDpp.originalClassDate) updates.originalClassDate = originalClassDate;
+      if (!existingDpp.done && existingDpp.subjectId !== classSlot.subjectId) {
+        updates.subjectId = classSlot.subjectId;
+        updates.title = `${subjectName} DPP ${classSlot.slot}`;
+      }
+      if (Object.keys(updates).length > 0) {
+        await db.dailyTasks.update(existingDpp.id, updates);
+        Object.assign(existingDpp, updates);
+      }
     }
   }
 
@@ -318,7 +351,19 @@ export async function initializeDatabase(): Promise<void> {
     });
   }
 
-  // Ensure lecture and DPP tasks for ALL days of the current week (and surrounding days) are generated
+  // Backfill studyDate and originalClassDate for any existing records
+  const allExistingTasks = await db.dailyTasks.toArray();
+  for (const t of allExistingTasks) {
+    if (!t.studyDate || !t.originalClassDate) {
+      const sDate = t.studyDate || t.dateKey;
+      await db.dailyTasks.update(t.id, {
+        studyDate: sDate,
+        originalClassDate: t.originalClassDate || getPreviousDayKey(sDate),
+      });
+    }
+  }
+
+  // Ensure lecture and DPP tasks for all days of the current week are generated with recorded mapping
   const currentWeek = getWeekDaysForDate(new Date());
   for (const day of currentWeek) {
     await generateTasksForDate(day.dateKey);

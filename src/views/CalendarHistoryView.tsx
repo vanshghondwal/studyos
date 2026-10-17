@@ -7,12 +7,14 @@ import {
   Clock,
   Sparkles,
   RotateCcw,
+  Video,
 } from 'lucide-react';
 import { StudyDataState } from '../hooks/useStudyData';
 import {
   getTodayKey,
   formatFriendlyDate,
   formatDateKey,
+  getPreviousDayKey,
 } from '../utils/dates';
 
 interface CalendarHistoryViewProps {
@@ -235,7 +237,11 @@ export const CalendarHistoryView: React.FC<CalendarHistoryViewProps> = ({
             <h4 className="text-sm font-bold text-white">
               {formatFriendlyDate(selectedDateKey)}
             </h4>
-            <div className="flex items-center gap-2 mt-1 text-xs text-slate-400 font-mono">
+            <div className="text-[11px] text-violet-300 font-sans mt-0.5 flex items-center gap-1">
+              <Video className="w-3 h-3 text-violet-400" />
+              <span>Recorded classes for {formatFriendlyDate(getPreviousDayKey(selectedDateKey))}</span>
+            </div>
+            <div className="flex items-center gap-2 mt-1.5 text-xs text-slate-400 font-mono">
               <span>{completedCount} of {totalCount} completed</span>
               <span>·</span>
               <span className={percentage === 100 ? 'text-emerald-400 font-bold' : 'text-slate-300'}>

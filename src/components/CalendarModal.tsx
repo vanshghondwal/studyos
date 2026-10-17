@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ChevronLeft, ChevronRight, X, Calendar as CalendarIcon, CheckCircle2 } from 'lucide-react';
 import { StudyDataState } from '../hooks/useStudyData';
-import { formatDateKey, getTodayKey, formatFriendlyDate } from '../utils/dates';
+import { formatDateKey, getTodayKey, formatFriendlyDate, getPreviousDayKey } from '../utils/dates';
 
 interface CalendarModalProps {
   isOpen: boolean;
@@ -151,7 +151,10 @@ export const CalendarModal: React.FC<CalendarModalProps> = ({
           >
             Jump to Today
           </button>
-          <span>Selected: {formatFriendlyDate(selectedDateKey)}</span>
+          <div className="text-right">
+            <div>Selected: <span className="font-semibold text-slate-800">{formatFriendlyDate(selectedDateKey)}</span></div>
+            <div className="text-[10px] text-blue-600 font-medium">Recorded classes for {formatFriendlyDate(getPreviousDayKey(selectedDateKey))}</div>
+          </div>
         </div>
       </div>
     </div>
