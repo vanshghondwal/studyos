@@ -258,8 +258,8 @@ export async function generateTasksForDate(dateKey: string): Promise<DailyTask[]
       const updates: Partial<DailyTask> = {};
       if (!existingLec.studyDate) updates.studyDate = dateKey;
       if (!existingLec.originalClassDate) updates.originalClassDate = originalClassDate;
-      // If uncompleted and subject doesn't match mapped slot, update to current mapped class
-      if (!existingLec.done && existingLec.subjectId !== classSlot.subjectId) {
+      // If uncompleted and today/future, update to current mapped class if changed (preserving past historical tasks)
+      if (!existingLec.done && dateKey >= getTodayKey() && existingLec.subjectId !== classSlot.subjectId) {
         updates.subjectId = classSlot.subjectId;
         updates.title = `${subjectName} Lecture (Class ${classSlot.slot})`;
       }
@@ -291,7 +291,8 @@ export async function generateTasksForDate(dateKey: string): Promise<DailyTask[]
       const updates: Partial<DailyTask> = {};
       if (!existingDpp.studyDate) updates.studyDate = dateKey;
       if (!existingDpp.originalClassDate) updates.originalClassDate = originalClassDate;
-      if (!existingDpp.done && existingDpp.subjectId !== classSlot.subjectId) {
+      // If uncompleted and today/future, update to current mapped class if changed (preserving past historical tasks)
+      if (!existingDpp.done && dateKey >= getTodayKey() && existingDpp.subjectId !== classSlot.subjectId) {
         updates.subjectId = classSlot.subjectId;
         updates.title = `${subjectName} DPP ${classSlot.slot}`;
       }
@@ -309,25 +310,87 @@ export async function generateTasksForDate(dateKey: string): Promise<DailyTask[]
   return [...existing, ...newTasks];
 }
 
+export async function persistDaySchedule(daySchedule: DaySchedule): Promise<void> {
+  // 1. Validate schedule data
+  if (typeof daySchedule.dayOfWeek !== 'number' || daySchedule.dayOfWeek < 0 || daySchedule.dayOfWeek > 6) {
+    throw new Error(`Invalid dayOfWeek: ${daySchedule.dayOfWeek}. Must be between 0 (Sunday) and 6 (Saturday).`);
+  }
+  if (!Array.isArray(daySchedule.classes)) {
+    throw new Error('Schedule classes must be an array.');
+  }
+
+  // Ensure all 3 slots (1, 2, 3) are strictly normalized
+  const validSlots = [1, 2, 3] as const;
+  const normalizedClasses = validSlots.map((slotNum) => {
+    const existing = daySchedule.classes.find((c) => c.slot === slotNum);
+    return {
+      slot: slotNum,
+      subjectId: existing?.subjectId ? String(existing.subjectId) : null,
+    };
+  });
+
+  const validatedRecord: DaySchedule = {
+    dayOfWeek: daySchedule.dayOfWeek,
+    dayName: daySchedule.dayName || 'Day',
+    isRestDay: !!daySchedule.isRestDay,
+    classes: normalizedClasses,
+  };
+
+  // 2. Persist transactionally to Dexie IndexedDB
+  await db.transaction('rw', [db.weeklySchedule, db.dailyTasks, db.subjects], async () => {
+    await db.weeklySchedule.put(validatedRecord);
+
+    // 3. Synchronize active and future uncompleted tasks (preserving completed and past records)
+    const todayKey = getTodayKey();
+    const allSubjects = await db.subjects.toArray();
+    const subjectMap = new Map(allSubjects.map((s) => [s.id, s]));
+
+    const activeTasks = await db.dailyTasks
+      .where('dateKey')
+      .aboveOrEqual(todayKey)
+      .toArray();
+
+    for (const task of activeTasks) {
+      if (task.done) continue; // NEVER modify completed tasks!
+
+      // Check if this task corresponds to original class on validatedRecord.dayOfWeek
+      const origDate = task.originalClassDate || getPreviousDayKey(task.dateKey);
+      const origDayOfWeek = getDayOfWeekFromKey(origDate);
+
+      if (origDayOfWeek === validatedRecord.dayOfWeek && task.classSlot) {
+        const slotConfig = normalizedClasses.find((c) => c.slot === task.classSlot);
+        if (slotConfig && slotConfig.subjectId) {
+          const sub = subjectMap.get(slotConfig.subjectId);
+          const subName = sub ? sub.name : 'Class';
+          const newTitle =
+            task.type === 'lecture'
+              ? `${subName} Lecture (Class ${task.classSlot})`
+              : `${subName} DPP ${task.classSlot}`;
+          await db.dailyTasks.update(task.id, {
+            subjectId: slotConfig.subjectId,
+            title: newTitle,
+          });
+        }
+      }
+    }
+  });
+}
+
 export async function initializeDatabase(): Promise<void> {
   const subjectsCount = await db.subjects.count();
   if (subjectsCount === 0) {
     await db.subjects.bulkAdd(DEFAULT_SUBJECTS);
   }
 
+  // Initialize weekly schedule only once if no schedule has ever been saved
   const scheduleCount = await db.weeklySchedule.count();
   if (scheduleCount === 0) {
     await db.weeklySchedule.bulkAdd(DEFAULT_WEEKLY_SCHEDULE);
   } else {
-    // Ensure all 7 days (Monday through Sunday) have full classes configured in existing databases
+    // Ensure all 7 days (Monday through Sunday) exist in DB without overwriting saved custom schedules
     for (const defaultDay of DEFAULT_WEEKLY_SCHEDULE) {
       const existingDay = await db.weeklySchedule.get(defaultDay.dayOfWeek);
-      if (
-        !existingDay ||
-        existingDay.isRestDay ||
-        existingDay.classes.length < 3 ||
-        existingDay.classes.some((c) => !c.subjectId)
-      ) {
+      if (!existingDay) {
         await db.weeklySchedule.put(defaultDay);
       }
     }

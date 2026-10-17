@@ -123,6 +123,7 @@ export default function App() {
           <WeeklyPlannerRedesignView
             data={studyData}
             onUpdateSlot={studyData.updateWeeklyScheduleSlot}
+            onSaveScheduleDay={studyData.saveWeeklyScheduleDay}
             onToggleTask={studyData.toggleTask}
             onSelectDate={(dateKey) => {
               setSelectedDateKey(dateKey);
@@ -180,6 +181,7 @@ export default function App() {
         onClose={() => setIsScheduleEditOpen(false)}
         data={studyData}
         onUpdateSlot={studyData.updateWeeklyScheduleSlot}
+        onSaveScheduleDay={studyData.saveWeeklyScheduleDay}
       />
 
       {/* Subtle Toast Notification */}

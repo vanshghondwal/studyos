@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
   Check,
   Edit2,
+  Sliders,
   Clock,
   BookOpen,
   FileText,
@@ -12,9 +13,11 @@ import {
   Sparkles,
   Video,
   ArrowRight,
+  Loader2,
+  AlertCircle,
 } from 'lucide-react';
 import { StudyDataState } from '../hooks/useStudyData';
-import { DaySchedule } from '../types';
+import { DaySchedule, WeeklyClassSlot } from '../types';
 import {
   getTodayKey,
   getWeekDaysForDate,
@@ -22,12 +25,13 @@ import {
   parseDateKey,
   getPreviousDayKey,
   getDayOfWeekFromKey,
-  formatOriginalClassDateLabel,
+  WEEKDAY_NAMES,
 } from '../utils/dates';
 
 interface WeeklyPlannerRedesignViewProps {
   data: StudyDataState;
   onUpdateSlot: (dayOfWeek: number, slot: 1 | 2 | 3, subjectId: string | null) => Promise<void>;
+  onSaveScheduleDay?: (daySchedule: DaySchedule) => Promise<{ success: boolean; message?: string }>;
   onToggleTask: (taskId: string) => Promise<{ success: boolean; message?: string }>;
   onSelectDate: (dateKey: string) => void;
 }
@@ -35,13 +39,21 @@ interface WeeklyPlannerRedesignViewProps {
 export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps> = ({
   data,
   onUpdateSlot,
+  onSaveScheduleDay,
   onToggleTask,
   onSelectDate,
 }) => {
   const todayKey = getTodayKey();
   const [currentWeekBaseDate, setCurrentWeekBaseDate] = useState<Date>(new Date());
   const [selectedDayKey, setSelectedDayKey] = useState<string>(todayKey);
-  const [editingDay, setEditingDay] = useState<DaySchedule | null>(null);
+
+  // Timetable Editor Modal State
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [editingDayOfWeek, setEditingDayOfWeek] = useState<number>(1); // 1 = Monday
+  const [draftClasses, setDraftClasses] = useState<WeeklyClassSlot[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const subjectMap = new Map(data.subjects.map((s) => [s.id, s]));
 
@@ -65,6 +77,100 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
     setSelectedDayKey(todayKey);
   };
 
+  // Open timetable editor for a specific dayOfWeek
+  const openEditorForDay = (dayOfWeek: number) => {
+    setEditingDayOfWeek(dayOfWeek);
+    const day = data.weeklySchedule.find((s) => s.dayOfWeek === dayOfWeek);
+    if (day) {
+      setDraftClasses(day.classes.map((c) => ({ ...c })));
+    } else {
+      setDraftClasses([
+        { slot: 1, subjectId: null },
+        { slot: 2, subjectId: null },
+        { slot: 3, subjectId: null },
+      ]);
+    }
+    setSaveSuccess(false);
+    setSaveError(null);
+    setIsEditorOpen(true);
+  };
+
+  // Sync draft when switching dayOfWeek in editor
+  useEffect(() => {
+    if (isEditorOpen) {
+      const day = data.weeklySchedule.find((s) => s.dayOfWeek === editingDayOfWeek);
+      if (day) {
+        setDraftClasses(day.classes.map((c) => ({ ...c })));
+      } else {
+        setDraftClasses([
+          { slot: 1, subjectId: null },
+          { slot: 2, subjectId: null },
+          { slot: 3, subjectId: null },
+        ]);
+      }
+      setSaveSuccess(false);
+      setSaveError(null);
+    }
+  }, [editingDayOfWeek, isEditorOpen, data.weeklySchedule]);
+
+  const handleSlotChange = (slot: 1 | 2 | 3, subjectId: string | null) => {
+    setSaveSuccess(false);
+    setSaveError(null);
+    setDraftClasses((curr) =>
+      curr.map((c) => (c.slot === slot ? { ...c, subjectId } : c))
+    );
+  };
+
+  const handleSaveSchedule = async () => {
+    setIsSaving(true);
+    setSaveError(null);
+    setSaveSuccess(false);
+
+    try {
+      // 1. Validate edited schedule
+      if (!draftClasses || draftClasses.length === 0) {
+        throw new Error('Schedule configuration cannot be empty.');
+      }
+
+      const activeDay = data.weeklySchedule.find((s) => s.dayOfWeek === editingDayOfWeek);
+      const dayName = activeDay ? activeDay.dayName : WEEKDAY_NAMES[editingDayOfWeek];
+
+      const scheduleToSave: DaySchedule = {
+        dayOfWeek: editingDayOfWeek,
+        dayName,
+        isRestDay: false,
+        classes: [1, 2, 3].map((slotNum) => {
+          const match = draftClasses.find((c) => c.slot === slotNum);
+          return {
+            slot: slotNum as 1 | 2 | 3,
+            subjectId: match?.subjectId || null,
+          };
+        }),
+      };
+
+      // 2. Persist changes to database & await transaction
+      if (onSaveScheduleDay) {
+        const res = await onSaveScheduleDay(scheduleToSave);
+        if (!res.success) {
+          throw new Error(res.message || 'Failed to save schedule to database.');
+        }
+      } else {
+        for (const cls of scheduleToSave.classes) {
+          await onUpdateSlot(editingDayOfWeek, cls.slot, cls.subjectId);
+        }
+      }
+
+      // 3. Show clear "Saved" indicator
+      setSaveSuccess(true);
+    } catch (err: unknown) {
+      console.error('Save schedule error:', err);
+      const msg = err instanceof Error ? err.message : 'Database transaction failed.';
+      setSaveError(msg);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto font-sans pb-12">
       {/* Header */}
@@ -86,29 +192,40 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Edit Weekly Timetable Button */}
           <button
-            onClick={prevWeek}
-            className="w-8 h-8 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 flex items-center justify-center text-slate-600 transition-colors cursor-pointer"
-            title="Previous week"
+            onClick={() => openEditorForDay(1)}
+            className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
           >
-            <ChevronLeft className="w-4 h-4" />
+            <Sliders className="w-3.5 h-3.5" />
+            <span>Edit Weekly Timetable</span>
           </button>
 
-          <button
-            onClick={resetToThisWeek}
-            className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 transition-colors cursor-pointer"
-          >
-            Current Week
-          </button>
+          <div className="flex items-center gap-1 border border-slate-200 rounded-xl bg-white p-0.5">
+            <button
+              onClick={prevWeek}
+              className="w-7 h-7 rounded-lg hover:bg-slate-50 flex items-center justify-center text-slate-600 transition-colors cursor-pointer"
+              title="Previous week"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
 
-          <button
-            onClick={nextWeek}
-            className="w-8 h-8 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 flex items-center justify-center text-slate-600 transition-colors cursor-pointer"
-            title="Next week"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
+            <button
+              onClick={resetToThisWeek}
+              className="px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer"
+            >
+              This Week
+            </button>
+
+            <button
+              onClick={nextWeek}
+              className="w-7 h-7 rounded-lg hover:bg-slate-50 flex items-center justify-center text-slate-600 transition-colors cursor-pointer"
+              title="Next week"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -182,18 +299,17 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
                     </div>
                   </div>
 
-                  {schedule && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setEditingDay(schedule);
-                      }}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer shrink-0"
-                      title={`Edit ${schedule.dayName} classes`}
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      // Open timetable editor for the original class date
+                      openEditorForDay(origDayOfWeek);
+                    }}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer shrink-0"
+                    title={`Edit ${schedule?.dayName || 'Class'} timetable`}
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
 
                 {/* Day Content: All days have 3 Class slots with separate Lecture & DPP checkboxes */}
@@ -340,72 +456,137 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
       </div>
 
       {/* Edit Day Timetable Modal */}
-      {editingDay && (
+      {isEditorOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-2xs p-4">
-          <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl p-6 shadow-xl text-slate-900 font-sans">
-            <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-100">
-              <h3 className="text-base font-bold text-slate-900">
-                Edit {editingDay.dayName} Timetable
-              </h3>
+          <div className="w-full max-w-lg bg-white border border-slate-200 rounded-2xl p-6 shadow-xl text-slate-900 font-sans">
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-blue-600" />
+                <h3 className="text-base font-bold text-slate-900">
+                  Edit Weekly Timetable
+                </h3>
+              </div>
               <button
-                onClick={() => setEditingDay(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                onClick={() => setIsEditorOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
+            {/* Recorded lecture mapping notice */}
             <div className="p-3 rounded-xl bg-blue-50/70 border border-blue-200/60 text-xs text-blue-900 mb-4 flex items-start gap-2">
               <Video className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
               <div>
                 <p className="font-semibold">Recorded Lecture Mapping</p>
                 <p className="text-[11px] text-blue-700 mt-0.5">
-                  Classes scheduled for {editingDay.dayName} will be watched as recorded lectures on the following day.
+                  Classes scheduled for <span className="font-bold underline">{WEEKDAY_NAMES[editingDayOfWeek]}</span> are watched as recorded lectures on <span className="font-bold underline">{WEEKDAY_NAMES[(editingDayOfWeek + 1) % 7]}</span>.
                 </p>
               </div>
             </div>
 
-            <div className="space-y-4">
-              {editingDay.classes.map((cls) => (
-                <div key={cls.slot} className="space-y-1 text-xs">
-                  <label className="block font-medium text-slate-700">
-                    Class {cls.slot} Subject
-                  </label>
-                  <select
-                    value={cls.subjectId || 'none'}
-                    onChange={async (e) => {
-                      const val = e.target.value === 'none' ? null : e.target.value;
-                      await onUpdateSlot(editingDay.dayOfWeek, cls.slot, val);
-                      setEditingDay((curr) => {
-                        if (!curr) return null;
-                        return {
-                          ...curr,
-                          classes: curr.classes.map((c) =>
-                            c.slot === cls.slot ? { ...c, subjectId: val } : c
-                          ),
-                        };
-                      });
-                    }}
-                    className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-900 focus:bg-white focus:outline-hidden focus:border-blue-500 cursor-pointer"
+            {/* Error banner if save fails */}
+            {saveError && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 mb-4 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{saveError}</span>
+              </div>
+            )}
+
+            {/* Day Selector Tabs (Monday through Sunday) */}
+            <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl mb-5">
+              {data.weeklySchedule.map((day) => {
+                const isSelected = day.dayOfWeek === editingDayOfWeek;
+                return (
+                  <button
+                    key={day.dayOfWeek}
+                    onClick={() => setEditingDayOfWeek(day.dayOfWeek)}
+                    className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                      isSelected
+                        ? 'bg-white text-slate-900 shadow-xs ring-1 ring-slate-200'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
                   >
-                    <option value="none">No class</option>
-                    {data.subjects.map((sub) => (
-                      <option key={sub.id} value={sub.id}>
-                        {sub.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ))}
+                    {day.dayName.slice(0, 3)}
+                  </button>
+                );
+              })}
             </div>
 
-            <div className="flex justify-end pt-4 mt-4 border-t border-slate-100">
-              <button
-                onClick={() => setEditingDay(null)}
-                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition-colors cursor-pointer"
-              >
-                Done
-              </button>
+            {/* Class Slots */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-bold text-slate-900">
+                  {WEEKDAY_NAMES[editingDayOfWeek]} Classes
+                </h4>
+                <span className="text-xs text-slate-400">3 daily slots</span>
+              </div>
+
+              {[1, 2, 3].map((slotNum) => {
+                const slotConfig = draftClasses.find((c) => c.slot === slotNum);
+                const currentSubId = slotConfig?.subjectId || 'none';
+
+                return (
+                  <div key={slotNum} className="space-y-1 text-xs">
+                    <label className="block font-semibold text-slate-700">
+                      Class {slotNum}
+                    </label>
+                    <select
+                      value={currentSubId}
+                      onChange={(e) => {
+                        const val = e.target.value === 'none' ? null : e.target.value;
+                        handleSlotChange(slotNum as 1 | 2 | 3, val);
+                      }}
+                      className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-900 focus:bg-white focus:outline-hidden focus:border-blue-500 cursor-pointer"
+                    >
+                      <option value="none">No class</option>
+                      {data.subjects.map((sub) => (
+                        <option key={sub.id} value={sub.id}>
+                          {sub.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Modal Footer with Save Schedule button and Saved indicator */}
+            <div className="flex items-center justify-between pt-5 mt-5 border-t border-slate-100">
+              <div className="flex items-center gap-2">
+                {saveSuccess && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold">
+                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                    Saved to database
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setIsEditorOpen(false)}
+                  className="px-3.5 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-xs transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={handleSaveSchedule}
+                  disabled={isSaving}
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold text-xs shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  {isSaving ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Save Schedule</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>

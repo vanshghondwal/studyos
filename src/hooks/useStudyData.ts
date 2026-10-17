@@ -13,6 +13,7 @@ import {
   db,
   initializeDatabase,
   generateTasksForDate,
+  persistDaySchedule,
 } from '../db/db';
 import { getTodayKey, getWeekDaysForDate } from '../utils/dates';
 import { calculateLevel, calculateStreak } from '../utils/gamification';
@@ -395,13 +396,31 @@ export function useStudyData() {
     [showToast, refreshData]
   );
 
+  // Save weekly schedule day with validation, transactional persistence, and synchronization
+  const saveWeeklyScheduleDay = useCallback(
+    async (daySchedule: DaySchedule): Promise<{ success: boolean; message?: string }> => {
+      try {
+        await persistDaySchedule(daySchedule);
+        await refreshData();
+        showToast(`Saved schedule for ${daySchedule.dayName}`);
+        return { success: true };
+      } catch (err: unknown) {
+        console.error('Failed to save weekly schedule:', err);
+        const msg = err instanceof Error ? err.message : 'Failed to save weekly schedule';
+        showToast(`Error: ${msg}`);
+        return { success: false, message: msg };
+      }
+    },
+    [showToast, refreshData]
+  );
+
   // Update weekly schedule slot
   const updateWeeklyScheduleSlot = useCallback(
     async (dayOfWeek: number, slot: 1 | 2 | 3, subjectId: string | null) => {
       const day = await db.weeklySchedule.get(dayOfWeek);
       if (!day) return;
       const classes = day.classes.map((c) => (c.slot === slot ? { ...c, subjectId } : c));
-      await db.weeklySchedule.update(dayOfWeek, { classes });
+      await persistDaySchedule({ ...day, classes });
       showToast(`Schedule updated`);
       await refreshData();
     },
@@ -576,6 +595,7 @@ export function useStudyData() {
     editTask,
     deleteTask,
     updateWeeklyScheduleSlot,
+    saveWeeklyScheduleDay,
     updateUserSettings,
     exportData,
     importData,

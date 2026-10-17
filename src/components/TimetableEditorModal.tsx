@@ -1,13 +1,16 @@
-import React, { useState } from 'react';
-import { X, Sliders, Check, Video } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Sliders, Check, Video, AlertCircle, Loader2 } from 'lucide-react';
 import { StudyDataState } from '../hooks/useStudyData';
+import { DaySchedule, WeeklyClassSlot } from '../types';
 import { WEEKDAY_NAMES } from '../utils/dates';
 
 interface TimetableEditorModalProps {
   isOpen: boolean;
   onClose: () => void;
   data: StudyDataState;
-  onUpdateSlot: (dayOfWeek: number, slot: 1 | 2 | 3, subjectId: string | null) => Promise<void>;
+  onUpdateSlot?: (dayOfWeek: number, slot: 1 | 2 | 3, subjectId: string | null) => Promise<void>;
+  onSaveScheduleDay?: (daySchedule: DaySchedule) => Promise<{ success: boolean; message?: string }>;
+  initialDayOfWeek?: number;
 }
 
 export const TimetableEditorModal: React.FC<TimetableEditorModalProps> = ({
@@ -15,13 +18,93 @@ export const TimetableEditorModal: React.FC<TimetableEditorModalProps> = ({
   onClose,
   data,
   onUpdateSlot,
+  onSaveScheduleDay,
+  initialDayOfWeek = 1,
 }) => {
-  const [selectedDayOfWeek, setSelectedDayOfWeek] = useState<number>(1); // Monday default
+  const [selectedDayOfWeek, setSelectedDayOfWeek] = useState<number>(initialDayOfWeek);
+  const [draftClasses, setDraftClasses] = useState<WeeklyClassSlot[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Sync draft when selectedDayOfWeek changes or modal opens
+  useEffect(() => {
+    if (isOpen) {
+      const activeDay = data.weeklySchedule.find((s) => s.dayOfWeek === selectedDayOfWeek);
+      if (activeDay) {
+        setDraftClasses(activeDay.classes.map((c) => ({ ...c })));
+      } else {
+        setDraftClasses([
+          { slot: 1, subjectId: null },
+          { slot: 2, subjectId: null },
+          { slot: 3, subjectId: null },
+        ]);
+      }
+      setSaveSuccess(false);
+      setErrorMessage(null);
+    }
+  }, [isOpen, selectedDayOfWeek, data.weeklySchedule]);
 
   if (!isOpen) return null;
 
   const activeDay = data.weeklySchedule.find((s) => s.dayOfWeek === selectedDayOfWeek);
+  const activeDayName = activeDay ? activeDay.dayName : WEEKDAY_NAMES[selectedDayOfWeek];
   const followingDayName = WEEKDAY_NAMES[(selectedDayOfWeek + 1) % 7];
+
+  const handleSlotChange = (slot: 1 | 2 | 3, subjectId: string | null) => {
+    setSaveSuccess(false);
+    setErrorMessage(null);
+    setDraftClasses((curr) =>
+      curr.map((c) => (c.slot === slot ? { ...c, subjectId } : c))
+    );
+  };
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    setErrorMessage(null);
+    setSaveSuccess(false);
+
+    try {
+      // 1. Validate schedule
+      if (!draftClasses || draftClasses.length === 0) {
+        throw new Error('Classes configuration cannot be empty.');
+      }
+
+      const scheduleToSave: DaySchedule = {
+        dayOfWeek: selectedDayOfWeek,
+        dayName: activeDayName,
+        isRestDay: false,
+        classes: [1, 2, 3].map((slotNum) => {
+          const match = draftClasses.find((c) => c.slot === slotNum);
+          return {
+            slot: slotNum as 1 | 2 | 3,
+            subjectId: match?.subjectId || null,
+          };
+        }),
+      };
+
+      // 2. Persist to database & await transaction
+      if (onSaveScheduleDay) {
+        const res = await onSaveScheduleDay(scheduleToSave);
+        if (!res.success) {
+          throw new Error(res.message || 'Database transaction failed.');
+        }
+      } else if (onUpdateSlot) {
+        for (const cls of scheduleToSave.classes) {
+          await onUpdateSlot(selectedDayOfWeek, cls.slot, cls.subjectId);
+        }
+      }
+
+      // 3. Show clear "Saved" indicator
+      setSaveSuccess(true);
+    } catch (err: unknown) {
+      console.error('Error saving weekly schedule:', err);
+      const msg = err instanceof Error ? err.message : 'Failed to save changes to database.';
+      setErrorMessage(msg);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-2xs p-4">
@@ -33,7 +116,7 @@ export const TimetableEditorModal: React.FC<TimetableEditorModalProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+            className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -45,13 +128,20 @@ export const TimetableEditorModal: React.FC<TimetableEditorModalProps> = ({
           <div>
             <span className="font-semibold">Recorded Lecture Mapping: </span>
             <span className="text-blue-800">
-              Classes set for {activeDay?.dayName} will appear as recorded lectures on {followingDayName}.
+              Classes set for <span className="font-bold underline">{activeDayName}</span> will be watched as recorded lectures on <span className="font-bold underline">{followingDayName}</span>.
             </span>
           </div>
         </div>
 
+        {/* Error notification */}
+        {errorMessage && (
+          <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 mb-4 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>{errorMessage}</span>
+          </div>
+        )}
 
-        {/* Day selector tabs */}
+        {/* Day selector tabs (Monday through Sunday) */}
         <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl mb-5">
           {data.weeklySchedule.map((day) => {
             const isSelected = day.dayOfWeek === selectedDayOfWeek;
@@ -61,7 +151,7 @@ export const TimetableEditorModal: React.FC<TimetableEditorModalProps> = ({
                 onClick={() => setSelectedDayOfWeek(day.dayOfWeek)}
                 className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
                   isSelected
-                    ? 'bg-white text-slate-900 shadow-xs'
+                    ? 'bg-white text-slate-900 shadow-xs ring-1 ring-slate-200'
                     : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
@@ -75,44 +165,78 @@ export const TimetableEditorModal: React.FC<TimetableEditorModalProps> = ({
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-900">
-              {activeDay?.dayName} Classes
+              {activeDayName} Classes
             </h3>
             <span className="text-xs text-slate-400 font-sans">
               3 daily class slots
             </span>
           </div>
 
-          {activeDay?.classes.map((cls) => (
-            <div key={cls.slot} className="space-y-1 text-xs">
-              <label className="block font-semibold text-slate-700">
-                Class {cls.slot}
-              </label>
-              <select
-                value={cls.subjectId || 'none'}
-                onChange={async (e) => {
-                  const val = e.target.value === 'none' ? null : e.target.value;
-                  await onUpdateSlot(activeDay.dayOfWeek, cls.slot, val);
-                }}
-                className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-900 focus:bg-white focus:outline-hidden focus:border-blue-500 cursor-pointer"
-              >
-                <option value="none">No class</option>
-                {data.subjects.map((sub) => (
-                  <option key={sub.id} value={sub.id}>
-                    {sub.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ))}
+          {[1, 2, 3].map((slotNum) => {
+            const slotConfig = draftClasses.find((c) => c.slot === slotNum);
+            const currentSubId = slotConfig?.subjectId || 'none';
+
+            return (
+              <div key={slotNum} className="space-y-1 text-xs">
+                <label className="block font-semibold text-slate-700">
+                  Class {slotNum}
+                </label>
+                <select
+                  value={currentSubId}
+                  onChange={(e) => {
+                    const val = e.target.value === 'none' ? null : e.target.value;
+                    handleSlotChange(slotNum as 1 | 2 | 3, val);
+                  }}
+                  className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-900 focus:bg-white focus:outline-hidden focus:border-blue-500 cursor-pointer"
+                >
+                  <option value="none">No class</option>
+                  {data.subjects.map((sub) => (
+                    <option key={sub.id} value={sub.id}>
+                      {sub.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            );
+          })}
         </div>
 
-        <div className="flex justify-end pt-5 mt-4 border-t border-slate-100">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs shadow-xs transition-colors cursor-pointer"
-          >
-            Done
-          </button>
+        {/* Footer with Save Schedule and Clear Saved Feedback */}
+        <div className="flex items-center justify-between pt-5 mt-5 border-t border-slate-100">
+          <div className="flex items-center gap-2">
+            {saveSuccess && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold">
+                <Check className="w-3.5 h-3.5 stroke-[3]" />
+                Saved to database
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onClose}
+              className="px-3.5 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-xs transition-colors cursor-pointer"
+            >
+              Close
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={isSaving}
+              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold text-xs shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+            >
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Saving...</span>
+                </>
+              ) : (
+                <>
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Save Schedule</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>
