@@ -1,4 +1,4 @@
-export type TaskType = 'lecture' | 'dpp' | 'custom';
+export type TaskType = 'lecture' | 'dpp' | 'custom' | 'revision';
 
 export interface Subject {
   id: string;

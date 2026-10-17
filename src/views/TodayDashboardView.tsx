@@ -107,6 +107,9 @@ export const TodayDashboardView: React.FC<TodayDashboardViewProps> = ({
   const originalClassDateKey = getPreviousDayKey(selectedDateKey);
   const originalClassDayOfWeek = getDayOfWeekFromKey(originalClassDateKey);
   const daySchedule = data.weeklySchedule.find((s) => s.dayOfWeek === originalClassDayOfWeek);
+  const assignedClasses = daySchedule?.classes.filter((c) => c.subjectId !== null) || [];
+  const isSelectedDateRest = !!daySchedule?.isRestDay;
+  const hasScheduledClasses = !isSelectedDateRest && assignedClasses.length > 0;
 
   // Weekly Date Strip (7 cards: Monday to Sunday of the active week)
   const weekDays = getWeekDaysForDate(selectedDate);
@@ -222,7 +225,9 @@ export const TodayDashboardView: React.FC<TodayDashboardViewProps> = ({
           const origDateKey = getPreviousDayKey(wd.dateKey);
           const origDayOfWeek = getDayOfWeekFromKey(origDateKey);
           const origSchedule = data.weeklySchedule.find((s) => s.dayOfWeek === origDayOfWeek);
-          const isRest = origSchedule?.isRestDay;
+          const assignedClasses = origSchedule?.classes.filter((c) => !!c.subjectId) || [];
+          const isRest = !!origSchedule?.isRestDay;
+          const isNoClassDay = isRest || assignedClasses.length === 0;
 
           const allDone = totalCount > 0 && doneCount === totalCount;
           const hasDoneSome = doneCount > 0 && !allDone;
@@ -268,16 +273,20 @@ export const TodayDashboardView: React.FC<TodayDashboardViewProps> = ({
                 </div>
 
                 {/* Status indicator icon in top right */}
-                {isRest ? (
-                  <span className="w-4 h-4 rounded-full border border-slate-200 flex items-center justify-center text-[9px] text-slate-400 shrink-0">
-                    ·
-                  </span>
-                ) : allDone ? (
+                {totalCount > 0 && allDone ? (
                   <div className="w-4 h-4 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-2xs shrink-0">
                     <Check className="w-2.5 h-2.5 stroke-[3]" />
                   </div>
                 ) : hasDoneSome ? (
                   <div className="w-4 h-4 rounded-full border-2 border-amber-400 bg-amber-50 shrink-0" />
+                ) : isRest ? (
+                  <span className="w-4 h-4 rounded-full border border-amber-200 bg-amber-50 flex items-center justify-center text-[9px] text-amber-600 shrink-0 font-medium" title="Rest day">
+                    ·
+                  </span>
+                ) : isNoClassDay ? (
+                  <span className="w-4 h-4 rounded-full border border-slate-200 bg-slate-50 flex items-center justify-center text-[9px] text-slate-400 shrink-0 font-medium" title="No classes scheduled">
+                    ·
+                  </span>
                 ) : (
                   <div className="w-4 h-4 rounded-full border border-slate-300 shrink-0" />
                 )}
@@ -285,7 +294,15 @@ export const TodayDashboardView: React.FC<TodayDashboardViewProps> = ({
 
               <div className="mt-2 pt-1 border-t border-slate-100/80">
                 <div className="text-[10px] font-mono font-medium text-slate-600 mb-1 flex items-center justify-between">
-                  <span>{isRest ? '0/0' : `${doneCount}/${totalCount}`}</span>
+                  <span>
+                    {totalCount > 0
+                      ? `${doneCount}/${totalCount}`
+                      : isRest
+                      ? 'Rest day'
+                      : isNoClassDay
+                      ? 'No classes'
+                      : '0 tasks'}
+                  </span>
                   {totalCount > 0 && (
                     <span className="text-[9px] text-slate-400">{percent}%</span>
                   )}
@@ -442,7 +459,11 @@ export const TodayDashboardView: React.FC<TodayDashboardViewProps> = ({
                 </h2>
               </div>
               <div className="text-xs font-medium text-slate-500 font-mono">
-                {completedTasks} of {totalTasks} completed
+                {totalTasks > 0
+                  ? `${completedTasks} of ${totalTasks} completed`
+                  : isSelectedDateRest
+                  ? 'Rest day'
+                  : 'No classes scheduled'}
               </div>
             </div>
 
@@ -457,14 +478,52 @@ export const TodayDashboardView: React.FC<TodayDashboardViewProps> = ({
               </p>
               <div className="text-xs font-medium text-blue-700 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200/60 inline-flex items-center gap-1.5 self-start">
                 <Video className="w-3.5 h-3.5 text-blue-600" />
-                <span>{formatOriginalClassDateLabel(selectedDateKey)}</span>
+                <span>
+                  {formatOriginalClassDateLabel(selectedDateKey)}
+                  {!hasScheduledClasses && ' • No recorded classes scheduled'}
+                </span>
               </div>
             </div>
 
-            {/* Class Cards Grouped by Class Slot */}
-            {daySchedule?.classes
-              .filter((c) => c.subjectId !== null)
-              .map((classSlot) => {
+            {/* If no classes are scheduled for this day, display the clear attractive break/revision state */}
+            {!hasScheduledClasses ? (
+              <div className="rounded-2xl border border-slate-200/90 bg-white p-7 sm:p-9 text-center shadow-xs">
+                <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-500 mx-auto mb-3">
+                  <CalendarIcon className="w-6 h-6 stroke-[1.75]" />
+                </div>
+                <h3 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
+                  {isSelectedToday
+                    ? 'No classes scheduled today'
+                    : `No classes scheduled for ${selectedDate.toLocaleDateString('en-US', { weekday: 'long' })}`}
+                </h3>
+                <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                  Enjoy your break or use this time for revision.
+                </p>
+
+                <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+                  <button
+                    onClick={() => {
+                      setNewType('revision');
+                      setNewTitle('Chapter Revision');
+                      setIsAddModalOpen(true);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add revision task</span>
+                  </button>
+
+                  <button
+                    onClick={onOpenScheduleEdit}
+                    className="px-3.5 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 transition-colors cursor-pointer"
+                  >
+                    <span>Edit schedule</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* Class Cards: Render ONLY assigned classes, never empty class cards */
+              assignedClasses.map((classSlot) => {
                 const sub = subjectMap.get(classSlot.subjectId!);
                 const isCollapsed = collapsedClasses[classSlot.slot];
 
@@ -475,8 +534,6 @@ export const TodayDashboardView: React.FC<TodayDashboardViewProps> = ({
 
                 // Slot border accent color
                 const accentColor = sub?.color || '#3b82f6';
-                const isSlot1 = classSlot.slot === 1;
-                const isSlot2 = classSlot.slot === 2;
 
                 return (
                   <div
@@ -653,11 +710,12 @@ export const TodayDashboardView: React.FC<TodayDashboardViewProps> = ({
                     )}
                   </div>
                 );
-              })}
+              })
+            )}
 
-            {/* Custom Tasks (if any) */}
+            {/* Custom & Revision Tasks (if any) */}
             {selectedDayTasks
-              .filter((t) => t.type === 'custom' || !t.classSlot)
+              .filter((t) => t.type === 'custom' || t.type === 'revision' || !t.classSlot)
               .map((customTask) => (
                 <div
                   key={customTask.id}
@@ -678,8 +736,12 @@ export const TodayDashboardView: React.FC<TodayDashboardViewProps> = ({
                       {customTask.title}
                     </span>
                   </div>
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-mono">
-                    Custom
+                  <span className={`text-[11px] px-2 py-0.5 rounded-full font-mono capitalize ${
+                    customTask.type === 'revision'
+                      ? 'bg-amber-100 text-amber-800'
+                      : 'bg-slate-100 text-slate-600'
+                  }`}>
+                    {customTask.type || 'Custom'}
                   </span>
                 </div>
               ))}
@@ -700,54 +762,75 @@ export const TodayDashboardView: React.FC<TodayDashboardViewProps> = ({
           {/* 1. Today's Progress Card */}
           <div className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-xs">
             <h3 className="text-sm font-bold text-slate-900 mb-4 font-sans">
-              Today's Progress
+              {isSelectedToday ? "Today's Progress" : "Day's Progress"}
             </h3>
 
-            <div className="flex items-center gap-5">
-              {/* Circular Progress Ring */}
-              <div className="relative w-20 h-20 shrink-0 flex items-center justify-center">
-                <svg className="w-full h-full transform -rotate-90" viewBox="0 0 80 80">
-                  <circle
-                    cx="40"
-                    cy="40"
-                    r={radius}
-                    className="stroke-slate-100"
-                    strokeWidth="7"
-                    fill="none"
-                  />
-                  <circle
-                    cx="40"
-                    cy="40"
-                    r={radius}
-                    stroke="#3b82f6"
-                    strokeWidth="7"
-                    strokeDasharray={circumference}
-                    strokeDashoffset={strokeDashoffset}
-                    strokeLinecap="round"
-                    fill="none"
-                    className="transition-all duration-300"
-                  />
-                </svg>
-                <div className="absolute inset-0 flex items-center justify-center font-bold text-slate-900 text-sm font-mono">
-                  {completionPercent}%
+            {totalTasks === 0 ? (
+              <div className="flex items-center gap-4 py-2">
+                <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 shrink-0">
+                  <CalendarIcon className="w-6 h-6 stroke-[1.5]" />
                 </div>
-              </div>
-
-              {/* Stats description */}
-              <div className="space-y-1 text-xs">
-                <div className="text-slate-700 font-medium font-sans">
-                  {completedTasks} / {totalTasks} completed
-                </div>
-                <div className="text-slate-500 font-sans">
-                  {remainingTasks} remaining
-                </div>
-                {overdueTasks.length > 0 && (
-                  <div className="text-rose-600 font-semibold font-sans">
-                    {overdueTasks.length} overdue
+                <div className="space-y-1 text-xs">
+                  <div className="text-slate-800 font-bold font-sans">
+                    {isSelectedDateRest ? 'Rest day' : 'No classes scheduled'}
                   </div>
-                )}
+                  <p className="text-slate-500 font-sans">
+                    Enjoy your break or use this time for revision.
+                  </p>
+                  {overdueTasks.length > 0 && (
+                    <div className="text-rose-600 font-semibold font-sans pt-0.5">
+                      {overdueTasks.length} overdue pending
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="flex items-center gap-5">
+                {/* Circular Progress Ring */}
+                <div className="relative w-20 h-20 shrink-0 flex items-center justify-center">
+                  <svg className="w-full h-full transform -rotate-90" viewBox="0 0 80 80">
+                    <circle
+                      cx="40"
+                      cy="40"
+                      r={radius}
+                      className="stroke-slate-100"
+                      strokeWidth="7"
+                      fill="none"
+                    />
+                    <circle
+                      cx="40"
+                      cy="40"
+                      r={radius}
+                      stroke="#3b82f6"
+                      strokeWidth="7"
+                      strokeDasharray={circumference}
+                      strokeDashoffset={strokeDashoffset}
+                      strokeLinecap="round"
+                      fill="none"
+                      className="transition-all duration-300"
+                    />
+                  </svg>
+                  <div className="absolute inset-0 flex items-center justify-center font-bold text-slate-900 text-sm font-mono">
+                    {completionPercent}%
+                  </div>
+                </div>
+
+                {/* Stats description */}
+                <div className="space-y-1 text-xs">
+                  <div className="text-slate-700 font-medium font-sans">
+                    {completedTasks} / {totalTasks} completed
+                  </div>
+                  <div className="text-slate-500 font-sans">
+                    {remainingTasks} remaining
+                  </div>
+                  {overdueTasks.length > 0 && (
+                    <div className="text-rose-600 font-semibold font-sans">
+                      {overdueTasks.length} overdue
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* 2. Subjects (This Week) Card */}
@@ -883,6 +966,7 @@ export const TodayDashboardView: React.FC<TodayDashboardViewProps> = ({
                   >
                     <option value="lecture">Lecture</option>
                     <option value="dpp">DPP</option>
+                    <option value="revision">Revision Task</option>
                     <option value="custom">Custom Task</option>
                   </select>
                 </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Sliders, Check, Video, AlertCircle, Loader2 } from 'lucide-react';
+import { X, Sliders, Check, Video, AlertCircle, Loader2, Moon } from 'lucide-react';
 import { StudyDataState } from '../hooks/useStudyData';
 import { DaySchedule, WeeklyClassSlot } from '../types';
 import { WEEKDAY_NAMES } from '../utils/dates';
@@ -22,6 +22,7 @@ export const TimetableEditorModal: React.FC<TimetableEditorModalProps> = ({
   initialDayOfWeek = 1,
 }) => {
   const [selectedDayOfWeek, setSelectedDayOfWeek] = useState<number>(initialDayOfWeek);
+  const [isRestDay, setIsRestDay] = useState<boolean>(false);
   const [draftClasses, setDraftClasses] = useState<WeeklyClassSlot[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -32,8 +33,11 @@ export const TimetableEditorModal: React.FC<TimetableEditorModalProps> = ({
     if (isOpen) {
       const activeDay = data.weeklySchedule.find((s) => s.dayOfWeek === selectedDayOfWeek);
       if (activeDay) {
+        const isRest = activeDay.isRestDay || activeDay.classes.every((c) => !c.subjectId);
+        setIsRestDay(isRest);
         setDraftClasses(activeDay.classes.map((c) => ({ ...c })));
       } else {
+        setIsRestDay(false);
         setDraftClasses([
           { slot: 1, subjectId: null },
           { slot: 2, subjectId: null },
@@ -59,26 +63,32 @@ export const TimetableEditorModal: React.FC<TimetableEditorModalProps> = ({
     );
   };
 
+  const handleToggleRestDay = (checked: boolean) => {
+    setIsRestDay(checked);
+    setSaveSuccess(false);
+    setErrorMessage(null);
+    if (checked) {
+      setDraftClasses((curr) => curr.map((c) => ({ ...c, subjectId: null })));
+    }
+  };
+
   const handleSave = async () => {
     setIsSaving(true);
     setErrorMessage(null);
     setSaveSuccess(false);
 
     try {
-      // 1. Validate schedule
-      if (!draftClasses || draftClasses.length === 0) {
-        throw new Error('Classes configuration cannot be empty.');
-      }
+      const effectiveRestDay = isRestDay || draftClasses.every((c) => !c.subjectId);
 
       const scheduleToSave: DaySchedule = {
         dayOfWeek: selectedDayOfWeek,
         dayName: activeDayName,
-        isRestDay: false,
+        isRestDay: effectiveRestDay,
         classes: [1, 2, 3].map((slotNum) => {
           const match = draftClasses.find((c) => c.slot === slotNum);
           return {
             slot: slotNum as 1 | 2 | 3,
-            subjectId: match?.subjectId || null,
+            subjectId: effectiveRestDay ? null : (match?.subjectId || null),
           };
         }),
       };
@@ -142,7 +152,7 @@ export const TimetableEditorModal: React.FC<TimetableEditorModalProps> = ({
         )}
 
         {/* Day selector tabs (Monday through Sunday) */}
-        <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl mb-5">
+        <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl mb-4">
           {data.weeklySchedule.map((day) => {
             const isSelected = day.dayOfWeek === selectedDayOfWeek;
             return (
@@ -161,45 +171,77 @@ export const TimetableEditorModal: React.FC<TimetableEditorModalProps> = ({
           })}
         </div>
 
-        {/* Day Class Slots Editor */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-900">
-              {activeDayName} Classes
-            </h3>
-            <span className="text-xs text-slate-400 font-sans">
-              3 daily class slots
-            </span>
-          </div>
-
-          {[1, 2, 3].map((slotNum) => {
-            const slotConfig = draftClasses.find((c) => c.slot === slotNum);
-            const currentSubId = slotConfig?.subjectId || 'none';
-
-            return (
-              <div key={slotNum} className="space-y-1 text-xs">
-                <label className="block font-semibold text-slate-700">
-                  Class {slotNum}
-                </label>
-                <select
-                  value={currentSubId}
-                  onChange={(e) => {
-                    const val = e.target.value === 'none' ? null : e.target.value;
-                    handleSlotChange(slotNum as 1 | 2 | 3, val);
-                  }}
-                  className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-900 focus:bg-white focus:outline-hidden focus:border-blue-500 cursor-pointer"
-                >
-                  <option value="none">No class</option>
-                  {data.subjects.map((sub) => (
-                    <option key={sub.id} value={sub.id}>
-                      {sub.name}
-                    </option>
-                  ))}
-                </select>
+        {/* Rest Day / No Classes Toggle */}
+        <div className="mb-4 p-3 rounded-xl border border-slate-200 bg-slate-50/70 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <Moon className="w-4 h-4 text-amber-500" />
+            <div>
+              <div className="text-xs font-bold text-slate-900">Rest Day / No Scheduled Classes</div>
+              <div className="text-[11px] text-slate-500 font-sans">
+                Mark {activeDayName} as a break day without mandatory classes
               </div>
-            );
-          })}
+            </div>
+          </div>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              checked={isRestDay}
+              onChange={(e) => handleToggleRestDay(e.target.checked)}
+              className="sr-only peer"
+            />
+            <div className="w-9 h-5 bg-slate-200 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500"></div>
+          </label>
         </div>
+
+        {/* Day Class Slots Editor */}
+        {isRestDay ? (
+          <div className="p-6 rounded-xl border border-dashed border-amber-200 bg-amber-50/40 text-center text-xs text-amber-800">
+            <Moon className="w-6 h-6 text-amber-500 mx-auto mb-1.5 opacity-80" />
+            <div className="font-bold">{activeDayName} is marked as a Rest Day</div>
+            <div className="text-[11px] text-amber-700/80 mt-0.5">
+              No mandatory Lecture or DPP tasks will be generated.
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3.5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-900">
+                {activeDayName} Classes
+              </h3>
+              <span className="text-xs text-slate-400 font-sans">
+                3 daily class slots
+              </span>
+            </div>
+
+            {[1, 2, 3].map((slotNum) => {
+              const slotConfig = draftClasses.find((c) => c.slot === slotNum);
+              const currentSubId = slotConfig?.subjectId || 'none';
+
+              return (
+                <div key={slotNum} className="space-y-1 text-xs">
+                  <label className="block font-semibold text-slate-700">
+                    Class {slotNum}
+                  </label>
+                  <select
+                    value={currentSubId}
+                    onChange={(e) => {
+                      const val = e.target.value === 'none' ? null : e.target.value;
+                      handleSlotChange(slotNum as 1 | 2 | 3, val);
+                    }}
+                    className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-900 focus:bg-white focus:outline-hidden focus:border-blue-500 cursor-pointer"
+                  >
+                    <option value="none">No class</option>
+                    {data.subjects.map((sub) => (
+                      <option key={sub.id} value={sub.id}>
+                        {sub.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* Footer with Save Schedule and Clear Saved Feedback */}
         <div className="flex items-center justify-between pt-5 mt-5 border-t border-slate-100">

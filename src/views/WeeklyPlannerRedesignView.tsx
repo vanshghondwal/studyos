@@ -15,11 +15,11 @@ import {
   ArrowRight,
   Loader2,
   AlertCircle,
+  Moon,
 } from 'lucide-react';
 import { StudyDataState } from '../hooks/useStudyData';
 import { DaySchedule, WeeklyClassSlot } from '../types';
 import {
-  getTodayKey,
   getWeekDaysForDate,
   formatFriendlyDate,
   parseDateKey,
@@ -43,13 +43,13 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
   onToggleTask,
   onSelectDate,
 }) => {
-  const todayKey = getTodayKey();
-  const [currentWeekBaseDate, setCurrentWeekBaseDate] = useState<Date>(new Date());
-  const [selectedDayKey, setSelectedDayKey] = useState<string>(todayKey);
+  const [currentDate, setCurrentDate] = useState<Date>(new Date());
+  const [selectedDayKey, setSelectedDayKey] = useState<string>('');
 
-  // Timetable Editor Modal State
+  // Weekly Timetable Editor Modal State
   const [isEditorOpen, setIsEditorOpen] = useState(false);
-  const [editingDayOfWeek, setEditingDayOfWeek] = useState<number>(1); // 1 = Monday
+  const [editingDayOfWeek, setEditingDayOfWeek] = useState<number>(1); // 0=Sunday, 1=Monday...
+  const [isRestDay, setIsRestDay] = useState<boolean>(false);
   const [draftClasses, setDraftClasses] = useState<WeeklyClassSlot[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -57,33 +57,46 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
 
   const subjectMap = new Map(data.subjects.map((s) => [s.id, s]));
 
-  // Weekdays (Monday through Sunday)
-  const weekDays = getWeekDaysForDate(currentWeekBaseDate);
-
+  // Week navigation
   const prevWeek = () => {
-    const d = new Date(currentWeekBaseDate);
+    const d = new Date(currentDate);
     d.setDate(d.getDate() - 7);
-    setCurrentWeekBaseDate(d);
+    setCurrentDate(d);
   };
 
   const nextWeek = () => {
-    const d = new Date(currentWeekBaseDate);
+    const d = new Date(currentDate);
     d.setDate(d.getDate() + 7);
-    setCurrentWeekBaseDate(d);
+    setCurrentDate(d);
   };
 
   const resetToThisWeek = () => {
-    setCurrentWeekBaseDate(new Date());
-    setSelectedDayKey(todayKey);
+    setCurrentDate(new Date());
   };
 
-  // Open timetable editor for a specific dayOfWeek
+  // 7 Days of the active week (Monday through Sunday)
+  const weekDays = getWeekDaysForDate(currentDate);
+
+  // Set default selected day to today or Monday
+  useEffect(() => {
+    const today = weekDays.find((d) => d.isToday);
+    if (today && !selectedDayKey) {
+      setSelectedDayKey(today.dateKey);
+    } else if (!selectedDayKey && weekDays[0]) {
+      setSelectedDayKey(weekDays[0].dateKey);
+    }
+  }, [weekDays, selectedDayKey]);
+
+  // Open editor pre-populated for a specific weekday
   const openEditorForDay = (dayOfWeek: number) => {
     setEditingDayOfWeek(dayOfWeek);
     const day = data.weeklySchedule.find((s) => s.dayOfWeek === dayOfWeek);
     if (day) {
+      const isRest = day.isRestDay || day.classes.every((c) => !c.subjectId);
+      setIsRestDay(isRest);
       setDraftClasses(day.classes.map((c) => ({ ...c })));
     } else {
+      setIsRestDay(false);
       setDraftClasses([
         { slot: 1, subjectId: null },
         { slot: 2, subjectId: null },
@@ -95,13 +108,16 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
     setIsEditorOpen(true);
   };
 
-  // Sync draft when switching dayOfWeek in editor
+  // Sync draft when editingDayOfWeek changes inside open modal
   useEffect(() => {
     if (isEditorOpen) {
       const day = data.weeklySchedule.find((s) => s.dayOfWeek === editingDayOfWeek);
       if (day) {
+        const isRest = day.isRestDay || day.classes.every((c) => !c.subjectId);
+        setIsRestDay(isRest);
         setDraftClasses(day.classes.map((c) => ({ ...c })));
       } else {
+        setIsRestDay(false);
         setDraftClasses([
           { slot: 1, subjectId: null },
           { slot: 2, subjectId: null },
@@ -121,29 +137,34 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
     );
   };
 
+  const handleToggleRestDay = (checked: boolean) => {
+    setIsRestDay(checked);
+    setSaveSuccess(false);
+    setSaveError(null);
+    if (checked) {
+      setDraftClasses((curr) => curr.map((c) => ({ ...c, subjectId: null })));
+    }
+  };
+
   const handleSaveSchedule = async () => {
     setIsSaving(true);
     setSaveError(null);
     setSaveSuccess(false);
 
     try {
-      // 1. Validate edited schedule
-      if (!draftClasses || draftClasses.length === 0) {
-        throw new Error('Schedule configuration cannot be empty.');
-      }
-
       const activeDay = data.weeklySchedule.find((s) => s.dayOfWeek === editingDayOfWeek);
       const dayName = activeDay ? activeDay.dayName : WEEKDAY_NAMES[editingDayOfWeek];
+      const effectiveRestDay = isRestDay || draftClasses.every((c) => !c.subjectId);
 
       const scheduleToSave: DaySchedule = {
         dayOfWeek: editingDayOfWeek,
         dayName,
-        isRestDay: false,
+        isRestDay: effectiveRestDay,
         classes: [1, 2, 3].map((slotNum) => {
           const match = draftClasses.find((c) => c.slot === slotNum);
           return {
             slot: slotNum as 1 | 2 | 3,
-            subjectId: match?.subjectId || null,
+            subjectId: effectiveRestDay ? null : (match?.subjectId || null),
           };
         }),
       };
@@ -240,6 +261,11 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
           const isToday = wd.isToday;
           const isSelected = wd.dateKey === selectedDayKey;
 
+          // Assigned classes from the mapped original schedule
+          const assignedClasses = schedule?.classes.filter((c) => !!c.subjectId) || [];
+          const isScheduleRest = !!schedule?.isRestDay;
+          const hasNoClasses = isScheduleRest || assignedClasses.length === 0;
+
           // Tasks for this study date
           const dayTasks = data.allTasks.filter((t) => t.dateKey === wd.dateKey);
           const doneCount = dayTasks.filter((t) => t.done).length;
@@ -287,6 +313,16 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
                           Today
                         </span>
                       )}
+                      {/* Clear No-classes or Rest day indicators in header */}
+                      {isScheduleRest ? (
+                        <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200/80">
+                          Rest day
+                        </span>
+                      ) : hasNoClasses ? (
+                        <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                          No classes
+                        </span>
+                      ) : null}
                     </div>
                     <div className="text-xs font-semibold text-slate-700 font-sans mt-0.5">
                       {studyFriendly}
@@ -312,39 +348,53 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
                   </button>
                 </div>
 
-                {/* Day Content: All days have 3 Class slots with separate Lecture & DPP checkboxes */}
-                <div className="space-y-3">
-                  {schedule?.classes.map((cls) => {
-                    const sub = cls.subjectId ? subjectMap.get(cls.subjectId) : null;
-                    const lectureTask = dayTasks.find(
-                      (t) => t.classSlot === cls.slot && t.type === 'lecture'
-                    );
-                    const dppTask = dayTasks.find(
-                      (t) => t.classSlot === cls.slot && t.type === 'dpp'
-                    );
+                {/* Day Content */}
+                {hasNoClasses ? (
+                  /* If no classes are scheduled, display clear 'No recorded classes scheduled' message */
+                  <div className="py-7 px-4 rounded-xl border border-dashed border-slate-200 bg-slate-50/60 text-center space-y-1.5 my-1">
+                    <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mx-auto mb-1">
+                      <CalendarDays className="w-4 h-4 text-slate-400" />
+                    </div>
+                    <div className="text-xs font-bold text-slate-800">No recorded classes scheduled</div>
+                    <p className="text-[11px] text-slate-500 max-w-xs mx-auto">
+                      {isScheduleRest
+                        ? 'Enjoy your rest day or use this time for revision.'
+                        : 'No lectures scheduled on original class date.'}
+                    </p>
+                  </div>
+                ) : (
+                  /* Render ONLY assigned classes. Do NOT show empty Class 1, 2, or 3 cards for unassigned slots */
+                  <div className="space-y-3">
+                    {assignedClasses.map((cls) => {
+                      const sub = subjectMap.get(cls.subjectId!);
+                      const lectureTask = dayTasks.find(
+                        (t) => t.classSlot === cls.slot && t.type === 'lecture'
+                      );
+                      const dppTask = dayTasks.find(
+                        (t) => t.classSlot === cls.slot && t.type === 'dpp'
+                      );
 
-                    return (
-                      <div
-                        key={cls.slot}
-                        className="p-2.5 rounded-xl border border-slate-100 bg-slate-50/70"
-                      >
-                        <div className="flex items-center justify-between text-xs mb-1">
-                          <span className="text-[10px] font-mono text-slate-400 font-semibold uppercase">
-                            Class {cls.slot}
-                          </span>
-                          {sub && (
-                            <span
-                              className="w-2 h-2 rounded-full"
-                              style={{ backgroundColor: sub.color }}
-                            />
-                          )}
-                        </div>
+                      return (
+                        <div
+                          key={cls.slot}
+                          className="p-2.5 rounded-xl border border-slate-100 bg-slate-50/70"
+                        >
+                          <div className="flex items-center justify-between text-xs mb-1">
+                            <span className="text-[10px] font-mono text-slate-400 font-semibold uppercase">
+                              Class {cls.slot}
+                            </span>
+                            {sub && (
+                              <span
+                                className="w-2 h-2 rounded-full"
+                                style={{ backgroundColor: sub.color }}
+                              />
+                            )}
+                          </div>
 
-                        <div className="text-xs font-bold text-slate-900 truncate mb-2">
-                          {sub ? sub.name : 'No class assigned'}
-                        </div>
+                          <div className="text-xs font-bold text-slate-900 truncate mb-2">
+                            {sub?.name || 'Class'}
+                          </div>
 
-                        {sub && (
                           <div className="space-y-1.5 pt-1.5 border-t border-slate-200/60">
                             {/* Separate Lecture Checkbox */}
                             <div className="flex items-center justify-between text-xs">
@@ -410,18 +460,60 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
                               <span className="text-[10px] text-slate-400 font-sans shrink-0">~30 min</span>
                             </div>
                           </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Additional Custom/Revision Tasks for this day */}
+                {dayTasks
+                  .filter((t) => t.type === 'custom' || t.type === 'revision' || !t.classSlot)
+                  .map((task) => (
+                    <div
+                      key={task.id}
+                      className="mt-2.5 p-2 rounded-xl border border-slate-200 bg-white flex items-center justify-between text-xs"
+                    >
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onToggleTask(task.id);
+                        }}
+                        className="flex items-center gap-1.5 text-left group cursor-pointer min-w-0"
+                      >
+                        <span
+                          className={`w-4 h-4 rounded flex items-center justify-center border text-[9px] transition-colors shrink-0 ${
+                            task.done
+                              ? 'bg-slate-900 border-slate-900 text-white'
+                              : 'border-slate-300 group-hover:border-slate-500 bg-white'
+                          }`}
+                        >
+                          {task.done && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                        </span>
+                        <span
+                          className={`text-[11px] font-medium truncate ${
+                            task.done ? 'line-through text-slate-400' : 'text-slate-800'
+                          }`}
+                        >
+                          {task.title}
+                        </span>
+                      </button>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-500 capitalize">
+                        {task.type}
+                      </span>
+                    </div>
+                  ))}
               </div>
 
               {/* Day Card Footer */}
               <div className="pt-3.5 mt-3 border-t border-slate-100">
                 <div className="flex items-center justify-between text-xs mb-1.5">
                   <span className="text-[11px] font-mono text-slate-500">
-                    {totalCount > 0 ? `${doneCount}/${totalCount} tasks done` : 'No tasks'}
+                    {totalCount > 0
+                      ? `${doneCount}/${totalCount} tasks done`
+                      : isScheduleRest
+                      ? 'Rest day'
+                      : 'No classes scheduled'}
                   </span>
                   {isAllDone && (
                     <span className="text-[10px] font-bold text-emerald-600 flex items-center gap-1">
@@ -494,7 +586,7 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
             )}
 
             {/* Day Selector Tabs (Monday through Sunday) */}
-            <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl mb-5">
+            <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl mb-4">
               {data.weeklySchedule.map((day) => {
                 const isSelected = day.dayOfWeek === editingDayOfWeek;
                 return (
@@ -513,43 +605,75 @@ export const WeeklyPlannerRedesignView: React.FC<WeeklyPlannerRedesignViewProps>
               })}
             </div>
 
-            {/* Class Slots */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h4 className="text-sm font-bold text-slate-900">
-                  {WEEKDAY_NAMES[editingDayOfWeek]} Classes
-                </h4>
-                <span className="text-xs text-slate-400">3 daily slots</span>
-              </div>
-
-              {[1, 2, 3].map((slotNum) => {
-                const slotConfig = draftClasses.find((c) => c.slot === slotNum);
-                const currentSubId = slotConfig?.subjectId || 'none';
-
-                return (
-                  <div key={slotNum} className="space-y-1 text-xs">
-                    <label className="block font-semibold text-slate-700">
-                      Class {slotNum}
-                    </label>
-                    <select
-                      value={currentSubId}
-                      onChange={(e) => {
-                        const val = e.target.value === 'none' ? null : e.target.value;
-                        handleSlotChange(slotNum as 1 | 2 | 3, val);
-                      }}
-                      className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-900 focus:bg-white focus:outline-hidden focus:border-blue-500 cursor-pointer"
-                    >
-                      <option value="none">No class</option>
-                      {data.subjects.map((sub) => (
-                        <option key={sub.id} value={sub.id}>
-                          {sub.name}
-                        </option>
-                      ))}
-                    </select>
+            {/* Rest Day / No Classes Toggle */}
+            <div className="mb-4 p-3 rounded-xl border border-slate-200 bg-slate-50/70 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Moon className="w-4 h-4 text-amber-500" />
+                <div>
+                  <div className="text-xs font-bold text-slate-900">Rest Day / No Scheduled Classes</div>
+                  <div className="text-[11px] text-slate-500 font-sans">
+                    Mark {WEEKDAY_NAMES[editingDayOfWeek]} as a break day without mandatory classes
                   </div>
-                );
-              })}
+                </div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={isRestDay}
+                  onChange={(e) => handleToggleRestDay(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-slate-200 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500"></div>
+              </label>
             </div>
+
+            {/* Class Slots */}
+            {isRestDay ? (
+              <div className="p-6 rounded-xl border border-dashed border-amber-200 bg-amber-50/40 text-center text-xs text-amber-800">
+                <Moon className="w-6 h-6 text-amber-500 mx-auto mb-1.5 opacity-80" />
+                <div className="font-bold">{WEEKDAY_NAMES[editingDayOfWeek]} is marked as a Rest Day</div>
+                <div className="text-[11px] text-amber-700/80 mt-0.5">
+                  No mandatory Lecture or DPP tasks will be generated.
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3.5">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-bold text-slate-900">
+                    {WEEKDAY_NAMES[editingDayOfWeek]} Classes
+                  </h4>
+                  <span className="text-xs text-slate-400 font-sans">3 daily slots</span>
+                </div>
+
+                {[1, 2, 3].map((slotNum) => {
+                  const slotConfig = draftClasses.find((c) => c.slot === slotNum);
+                  const currentSubId = slotConfig?.subjectId || 'none';
+
+                  return (
+                    <div key={slotNum} className="space-y-1 text-xs">
+                      <label className="block font-semibold text-slate-700">
+                        Class {slotNum}
+                      </label>
+                      <select
+                        value={currentSubId}
+                        onChange={(e) => {
+                          const val = e.target.value === 'none' ? null : e.target.value;
+                          handleSlotChange(slotNum as 1 | 2 | 3, val);
+                        }}
+                        className="w-full rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-900 focus:bg-white focus:outline-hidden focus:border-blue-500 cursor-pointer"
+                      >
+                        <option value="none">No class</option>
+                        {data.subjects.map((sub) => (
+                          <option key={sub.id} value={sub.id}>
+                            {sub.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             {/* Modal Footer with Save Schedule button and Saved indicator */}
             <div className="flex items-center justify-between pt-5 mt-5 border-t border-slate-100">

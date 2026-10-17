@@ -224,6 +224,44 @@ export async function generateTasksForDate(dateKey: string): Promise<DailyTask[]
     return existing;
   }
 
+  const isNoClassDay = schedule.isRestDay || schedule.classes.every((c) => !c.subjectId);
+
+  // If this day has no scheduled classes, do NOT generate mandatory Lecture/DPP tasks
+  if (isNoClassDay) {
+    // If uncompleted lecture/dpp tasks were previously created for this day, cleanly remove them for today/future
+    if (dateKey >= getTodayKey()) {
+      const ghostTasks = existing.filter(
+        (t) => !t.done && (t.type === 'lecture' || t.type === 'dpp')
+      );
+      if (ghostTasks.length > 0) {
+        await db.dailyTasks.bulkDelete(ghostTasks.map((t) => t.id));
+        return existing.filter((t) => !ghostTasks.some((gt) => gt.id === t.id));
+      }
+    }
+    return existing;
+  }
+
+  // If specific slots are unassigned (subjectId === null), clean up uncompleted tasks for those slots
+  if (dateKey >= getTodayKey()) {
+    const unassignedSlots = new Set(
+      schedule.classes.filter((c) => !c.subjectId).map((c) => c.slot)
+    );
+    const tasksToRemove = existing.filter(
+      (t) =>
+        !t.done &&
+        (t.type === 'lecture' || t.type === 'dpp') &&
+        t.classSlot &&
+        unassignedSlots.has(t.classSlot as 1 | 2 | 3)
+    );
+    if (tasksToRemove.length > 0) {
+      await db.dailyTasks.bulkDelete(tasksToRemove.map((t) => t.id));
+      for (const tr of tasksToRemove) {
+        const idx = existing.findIndex((e) => e.id === tr.id);
+        if (idx !== -1) existing.splice(idx, 1);
+      }
+    }
+  }
+
   const subjects = await db.subjects.toArray();
   const subjectMap = new Map(subjects.map((s) => [s.id, s]));
 
@@ -329,10 +367,12 @@ export async function persistDaySchedule(daySchedule: DaySchedule): Promise<void
     };
   });
 
+  const isRestDay = !!daySchedule.isRestDay || normalizedClasses.every((c) => !c.subjectId);
+
   const validatedRecord: DaySchedule = {
     dayOfWeek: daySchedule.dayOfWeek,
     dayName: daySchedule.dayName || 'Day',
-    isRestDay: !!daySchedule.isRestDay,
+    isRestDay,
     classes: normalizedClasses,
   };
 
@@ -359,7 +399,14 @@ export async function persistDaySchedule(daySchedule: DaySchedule): Promise<void
 
       if (origDayOfWeek === validatedRecord.dayOfWeek && task.classSlot) {
         const slotConfig = normalizedClasses.find((c) => c.slot === task.classSlot);
-        if (slotConfig && slotConfig.subjectId) {
+        // If the day is a rest day, or this slot now has no class assigned (subjectId === null)
+        if (validatedRecord.isRestDay || !slotConfig || !slotConfig.subjectId) {
+          // Remove uncompleted auto-generated tasks
+          if (task.type === 'lecture' || task.type === 'dpp') {
+            await db.dailyTasks.delete(task.id);
+          }
+        } else {
+          // Update subject and title if changed
           const sub = subjectMap.get(slotConfig.subjectId);
           const subName = sub ? sub.name : 'Class';
           const newTitle =

@@ -8,6 +8,7 @@ import {
   XpTransaction,
   UserSettings,
   Achievement,
+  TaskType,
 } from '../types';
 import {
   db,
@@ -333,7 +334,7 @@ export function useStudyData() {
     async (taskData: {
       title: string;
       subjectId: string;
-      type: 'lecture' | 'dpp' | 'custom';
+      type: TaskType;
       dateKey?: string;
       estimatedMinutes?: number;
       notes?: string;
